@@ -1,0 +1,11 @@
+.DS_Store
+.env
+.env.*
+coverage/
+dist/
+build/
+.vscode/settings.json
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
