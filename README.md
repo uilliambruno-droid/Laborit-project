@@ -46,13 +46,19 @@ poetry run pytest
 ## Current endpoint
 
 - `GET /api/health`
+- `GET /api/health/database`
 
-## Database integration (next step)
+## Database integration
 
-The project is intentionally prepared as structure-first. Database integration will be added in the next task.
+Database connection is now implemented with SQLAlchemy + MySQL driver.
 
 - Database engine: MySQL
 - Database name: `northwind`
-- Main tables to use first: `customers`, `employees`, `orders`, `products`
+- Mapped tables: `customers`, `employees`, `orders`, `products`
+
+Connection source priority:
+
+1. `DATABASE_URL`
+2. Individual vars: `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `DB_NAME`
 
 Important: use environment variables for credentials and never hardcode secrets in source files.
