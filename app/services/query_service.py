@@ -1,5 +1,9 @@
 from dataclasses import dataclass
 
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 @dataclass(frozen=True)
 class QueryPlan:
@@ -10,8 +14,18 @@ class QueryPlan:
 
 
 class QueryService:
+    def _log_plan(self, plan: QueryPlan) -> QueryPlan:
+        logger.debug(
+            "query_service_plan_resolved",
+            intent=plan.intent,
+            entity=plan.entity,
+            operation=plan.operation,
+        )
+        return plan
+
     def build_query(self, user_input: str) -> QueryPlan:
         normalized = user_input.strip().lower()
+        logger.debug("query_service_input", input_length=len(user_input))
 
         if any(
             word in normalized
@@ -28,8 +42,12 @@ class QueryService:
                     "clientes",
                 ]
             ):
-                return QueryPlan(
-                    intent="count_customers", entity="customers", operation="count"
+                return self._log_plan(
+                    QueryPlan(
+                        intent="count_customers",
+                        entity="customers",
+                        operation="count",
+                    )
                 )
             if any(
                 word in normalized
@@ -42,14 +60,18 @@ class QueryService:
                     "gerentes",
                 ]
             ):
-                return QueryPlan(
-                    intent="count_employees", entity="employees", operation="count"
+                return self._log_plan(
+                    QueryPlan(
+                        intent="count_employees",
+                        entity="employees",
+                        operation="count",
+                    )
                 )
             if any(
                 word in normalized for word in ["order", "orders", "pedido", "pedidos"]
             ):
-                return QueryPlan(
-                    intent="count_orders", entity="orders", operation="count"
+                return self._log_plan(
+                    QueryPlan(intent="count_orders", entity="orders", operation="count")
                 )
 
         if any(
@@ -64,13 +86,16 @@ class QueryService:
                 "estoque",
             ]
         ):
-            return QueryPlan(
-                intent="top_products_by_stock",
-                entity="products",
-                operation="list",
-                limit=5,
+            return self._log_plan(
+                QueryPlan(
+                    intent="top_products_by_stock",
+                    entity="products",
+                    operation="list",
+                    limit=5,
+                )
             )
 
-        return QueryPlan(
+        plan = QueryPlan(
             intent="customer_overview", entity="customers", operation="list", limit=5
         )
+        return self._log_plan(plan)

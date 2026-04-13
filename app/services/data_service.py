@@ -9,6 +9,9 @@ from app.models.order import Order
 from app.models.product import Product
 from app.services.query_service import QueryPlan
 from app.utils.database import get_session_factory
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class DataService:
@@ -17,31 +20,52 @@ class DataService:
 
     def fetch_data(self, query: QueryPlan) -> dict[str, object]:
         session_factory = self.session_factory or get_session_factory()
+        logger.debug(
+            "data_service_fetch_start", intent=query.intent, entity=query.entity
+        )
 
         with session_factory() as session:
             if query.intent == "count_customers":
                 total = session.scalar(select(func.count()).select_from(Customer)) or 0
-                return {
+                result = {
                     "intent": query.intent,
                     "entity": query.entity,
                     "total": int(total),
                 }
+                logger.debug(
+                    "data_service_fetch_done",
+                    intent=query.intent,
+                    total=result["total"],
+                )
+                return result
 
             if query.intent == "count_employees":
                 total = session.scalar(select(func.count()).select_from(Employee)) or 0
-                return {
+                result = {
                     "intent": query.intent,
                     "entity": query.entity,
                     "total": int(total),
                 }
+                logger.debug(
+                    "data_service_fetch_done",
+                    intent=query.intent,
+                    total=result["total"],
+                )
+                return result
 
             if query.intent == "count_orders":
                 total = session.scalar(select(func.count()).select_from(Order)) or 0
-                return {
+                result = {
                     "intent": query.intent,
                     "entity": query.entity,
                     "total": int(total),
                 }
+                logger.debug(
+                    "data_service_fetch_done",
+                    intent=query.intent,
+                    total=result["total"],
+                )
+                return result
 
             if query.intent == "top_products_by_stock":
                 statement: Select[tuple[Product]] = (
@@ -53,7 +77,7 @@ class DataService:
                     .limit(query.limit)
                 )
                 products = session.scalars(statement).all()
-                return {
+                result = {
                     "intent": query.intent,
                     "entity": query.entity,
                     "records": [
@@ -66,6 +90,12 @@ class DataService:
                         for product in products
                     ],
                 }
+                logger.debug(
+                    "data_service_fetch_done",
+                    intent=query.intent,
+                    record_count=len(result["records"]),
+                )
+                return result
 
             statement = (
                 select(Customer)
@@ -73,7 +103,7 @@ class DataService:
                 .limit(query.limit)
             )
             customers = session.scalars(statement).all()
-            return {
+            result = {
                 "intent": query.intent,
                 "entity": query.entity,
                 "records": [
@@ -86,3 +116,9 @@ class DataService:
                     for customer in customers
                 ],
             }
+            logger.debug(
+                "data_service_fetch_done",
+                intent=query.intent,
+                record_count=len(result["records"]),
+            )
+            return result

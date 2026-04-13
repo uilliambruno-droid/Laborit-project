@@ -73,6 +73,19 @@ The current implementation already includes:
 - retry + timeout handling inside the orchestrator;
 - fallback response when data or llm generation fails.
 
+## Structured logging
+
+The API now emits structured logs in three stages: **entry**, **process**, and **exit**.
+
+- entry logs at endpoint level (`copilot_request_received`);
+- process logs in orchestrator/services (`orchestrator_intent_detected`, `orchestrator_data_fetched`, `orchestrator_llm_generated`, cache hits, fallbacks);
+- exit logs at endpoint and orchestrator (`copilot_request_done`, `orchestrator_request_completed`).
+
+Configuration:
+
+- default mode is human-readable (`LOG_FORMAT=pretty`);
+- set `LOG_FORMAT=json` for one-line JSON logs compatible with observability tools.
+
 ### Response contract
 
 `POST /api/copilot/question` returns:
