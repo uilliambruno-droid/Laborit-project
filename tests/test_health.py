@@ -56,22 +56,53 @@ def test_database_health_missing_env_vars_returns_safe_message(monkeypatch) -> N
 
 
 def test_copilot_question_endpoint_success() -> None:
+    class FakeOrchestrator:
+        def run(self, user_input: str) -> dict[str, object]:
+            return {
+                "message": f"mocked answer for: {user_input}",
+                "metadata": {
+                    "trace_id": "trace-123",
+                    "response_source": "generated",
+                    "fallback_used": False,
+                },
+            }
+
+    routes.orchestrator = FakeOrchestrator()
+
     response = client.post(
         "/api/copilot/question",
         json={"question": "Which customers should I prioritize this week?"},
     )
     assert response.status_code == 200
     payload = response.json()
-    assert "answer" in payload
-    assert isinstance(payload["answer"], str)
+    assert payload == {
+        "answer": "mocked answer for: Which customers should I prioritize this week?",
+        "metadata": {
+            "trace_id": "trace-123",
+            "response_source": "generated",
+            "fallback_used": False,
+        },
+    }
 
 
 def test_copilot_question_endpoint_rejects_blank_question() -> None:
+    class FakeOrchestrator:
+        def run(self, user_input: str) -> dict[str, object]:
+            return {"message": f"mocked answer for: {user_input}", "metadata": {}}
+
+    routes.orchestrator = FakeOrchestrator()
+
     response = client.post("/api/copilot/question", json={"question": "     "})
     assert response.status_code == 422
 
 
 def test_copilot_question_endpoint_rejects_extra_fields() -> None:
+    class FakeOrchestrator:
+        def run(self, user_input: str) -> dict[str, object]:
+            return {"message": f"mocked answer for: {user_input}", "metadata": {}}
+
+    routes.orchestrator = FakeOrchestrator()
+
     response = client.post(
         "/api/copilot/question",
         json={"question": "How many active clients do I have?", "debug": True},

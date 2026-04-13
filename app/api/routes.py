@@ -31,6 +31,7 @@ class CopilotQuestionRequest(BaseModel):
 
 class CopilotQuestionResponse(BaseModel):
     answer: str
+    metadata: dict[str, object]
 
 
 @router.get("/health")
@@ -48,4 +49,7 @@ async def database_health_check() -> dict[str, str]:
 @router.post("/copilot/question", response_model=CopilotQuestionResponse)
 async def copilot_question(payload: CopilotQuestionRequest) -> CopilotQuestionResponse:
     result = orchestrator.run(payload.question)
-    return CopilotQuestionResponse(answer=result["message"])
+    return CopilotQuestionResponse(
+        answer=str(result["message"]),
+        metadata=dict(result.get("metadata", {})),
+    )
