@@ -3,6 +3,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.orchestrator.orchestrator import Orchestrator
 from app.utils.database import check_database_connection
+from app.utils.errors import INTERNAL_ERROR, descriptor_to_metadata
 
 router = APIRouter(prefix="/api", tags=["api"])
 orchestrator = Orchestrator()
@@ -48,8 +49,18 @@ async def database_health_check() -> dict[str, str]:
 
 @router.post("/copilot/question", response_model=CopilotQuestionResponse)
 async def copilot_question(payload: CopilotQuestionRequest) -> CopilotQuestionResponse:
-    result = orchestrator.run(payload.question)
-    return CopilotQuestionResponse(
-        answer=str(result["message"]),
-        metadata=dict(result.get("metadata", {})),
-    )
+    try:
+        result = orchestrator.run(payload.question)
+        return CopilotQuestionResponse(
+            answer=str(result["message"]),
+            metadata=dict(result.get("metadata", {})),
+        )
+    except Exception:
+        return CopilotQuestionResponse(
+            answer=INTERNAL_ERROR.user_message,
+            metadata={
+                "fallback_used": True,
+                "response_source": "friendly-error",
+                "error": descriptor_to_metadata(INTERNAL_ERROR),
+            },
+        )

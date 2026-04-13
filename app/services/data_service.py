@@ -12,10 +12,21 @@ from app.utils.database import get_session_factory
 
 
 class DataService:
+    SUPPORTED_INTENTS = {
+        "count_customers",
+        "count_employees",
+        "count_orders",
+        "top_products_by_stock",
+        "customer_overview",
+    }
+
     def __init__(self, session_factory: Callable[[], Session] | None = None) -> None:
         self.session_factory = session_factory
 
     def fetch_data(self, query: QueryPlan) -> dict[str, object]:
+        if not query.intent or query.intent not in self.SUPPORTED_INTENTS:
+            raise ValueError(f"Unsupported query intent: {query.intent}")
+
         session_factory = self.session_factory or get_session_factory()
 
         with session_factory() as session:

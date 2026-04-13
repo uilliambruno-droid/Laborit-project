@@ -1,18 +1,33 @@
 class LLMService:
     def generate_text(self, user_input: str, data: dict[str, object]) -> str:
+        if not isinstance(data, dict):
+            raise ValueError("LLM input data must be a dictionary")
+
         intent = data.get("intent")
+        if not isinstance(intent, str) or not intent:
+            raise ValueError("LLM input data is missing a valid intent")
 
         if intent == "count_customers":
+            if "total" not in data:
+                raise ValueError("LLM input data is missing 'total' for count intent")
             return f"There are {data['total']} customers available in the current portfolio dataset."
 
         if intent == "count_employees":
+            if "total" not in data:
+                raise ValueError("LLM input data is missing 'total' for count intent")
             return f"There are {data['total']} employees available in the current portfolio dataset."
 
         if intent == "count_orders":
+            if "total" not in data:
+                raise ValueError("LLM input data is missing 'total' for count intent")
             return f"There are {data['total']} orders registered in the current portfolio dataset."
 
         if intent == "top_products_by_stock":
             records = data.get("records", [])
+            if not isinstance(records, list):
+                raise ValueError(
+                    "LLM input data has invalid 'records' for stock intent"
+                )
             if not records:
                 return "No products were found for the current stock overview."
 
@@ -23,6 +38,8 @@ class LLMService:
             return f"Top products by stock are: {top_products}."
 
         records = data.get("records", [])
+        if not isinstance(records, list):
+            raise ValueError("LLM input data has invalid 'records' for overview intent")
         if not records:
             return "No customer data was found to answer this question."
 

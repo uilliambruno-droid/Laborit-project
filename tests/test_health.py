@@ -108,3 +108,25 @@ def test_copilot_question_endpoint_rejects_extra_fields() -> None:
         json={"question": "How many active clients do I have?", "debug": True},
     )
     assert response.status_code == 422
+
+
+def test_copilot_question_endpoint_returns_friendly_error_on_unexpected_failure() -> (
+    None
+):
+    class ExplodingOrchestrator:
+        def run(self, user_input: str) -> dict[str, object]:
+            raise RuntimeError("unexpected failure")
+
+    routes.orchestrator = ExplodingOrchestrator()
+
+    response = client.post(
+        "/api/copilot/question",
+        json={"question": "How many active clients do I have?"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "internal processing issue" in payload["answer"]
+    assert payload["metadata"]["fallback_used"] is True
+    assert payload["metadata"]["response_source"] == "friendly-error"
+    assert payload["metadata"]["error"]["code"] == "INTERNAL_ERROR"
