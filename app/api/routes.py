@@ -1,8 +1,36 @@
 from fastapi import APIRouter
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.orchestrator.orchestrator import Orchestrator
 from app.utils.database import check_database_connection
 
 router = APIRouter(prefix="/api", tags=["api"])
+orchestrator = Orchestrator()
+
+
+class CopilotQuestionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(
+        ...,
+        min_length=5,
+        max_length=500,
+        description="Question made by portfolio manager to the commercial copilot",
+    )
+
+    @field_validator("question")
+    @classmethod
+    def validate_question_content(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("question cannot be blank")
+        if normalized.count("?") > 3:
+            raise ValueError("question contains too many consecutive question marks")
+        return normalized
+
+
+class CopilotQuestionResponse(BaseModel):
+    answer: str
 
 
 @router.get("/health")
@@ -15,3 +43,9 @@ async def database_health_check() -> dict[str, str]:
     is_connected, detail = check_database_connection()
     status = "ok" if is_connected else "unavailable"
     return {"status": status, "detail": detail}
+
+
+@router.post("/copilot/question", response_model=CopilotQuestionResponse)
+async def copilot_question(payload: CopilotQuestionRequest) -> CopilotQuestionResponse:
+    result = orchestrator.run(payload.question)
+    return CopilotQuestionResponse(answer=result["message"])
