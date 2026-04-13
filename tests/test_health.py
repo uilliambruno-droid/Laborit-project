@@ -108,3 +108,29 @@ def test_copilot_question_endpoint_rejects_extra_fields() -> None:
         json={"question": "How many active clients do I have?", "debug": True},
     )
     assert response.status_code == 422
+
+
+def test_copilot_endpoint_emits_entry_and_exit_logs(caplog) -> None:
+    class FakeOrchestrator:
+        def run(self, user_input: str) -> dict[str, object]:
+            return {
+                "message": f"mocked answer for: {user_input}",
+                "metadata": {
+                    "trace_id": "trace-abc",
+                    "response_source": "generated",
+                    "fallback_used": False,
+                    "total_duration_ms": 1.23,
+                },
+            }
+
+    caplog.set_level("INFO")
+    routes.orchestrator = FakeOrchestrator()
+
+    response = client.post(
+        "/api/copilot/question",
+        json={"question": "Which customers should I prioritize this week?"},
+    )
+
+    assert response.status_code == 200
+    assert "copilot_request_received" in caplog.text
+    assert "copilot_request_done" in caplog.text

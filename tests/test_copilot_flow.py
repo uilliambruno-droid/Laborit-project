@@ -259,3 +259,26 @@ def test_orchestrator_opens_data_circuit_breaker_after_retries() -> None:
     breaker_state = result["metadata"]["circuit_breakers"]["data_service"]["state"]
     assert breaker_state in {"closed", "open"}
     assert result["metadata"]["response_source"] == "fallback"
+
+
+def test_orchestrator_emits_process_logs(caplog) -> None:
+    caplog.set_level("INFO")
+    orchestrator = create_test_orchestrator()
+
+    orchestrator.run("How many customers do we have?")
+
+    assert "orchestrator_intent_detected" in caplog.text
+    assert "orchestrator_data_fetched" in caplog.text
+    assert "orchestrator_llm_generated" in caplog.text
+    assert "orchestrator_request_completed" in caplog.text
+
+
+def test_orchestrator_logs_response_cache_hit(caplog) -> None:
+    caplog.set_level("INFO")
+    orchestrator = create_test_orchestrator()
+
+    orchestrator.run("How many customers do we have?")
+    orchestrator.run("How many customers do we have?")
+
+    assert "orchestrator_cache_hit" in caplog.text
+    assert "'cache_level': 'response_cache'" in caplog.text

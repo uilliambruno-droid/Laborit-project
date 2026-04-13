@@ -3,9 +3,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.orchestrator.orchestrator import Orchestrator
 from app.utils.database import check_database_connection
+from app.utils.logger import get_logger
 
 router = APIRouter(prefix="/api", tags=["api"])
 orchestrator = Orchestrator()
+logger = get_logger(__name__)
 
 
 class CopilotQuestionRequest(BaseModel):
@@ -48,8 +50,22 @@ async def database_health_check() -> dict[str, str]:
 
 @router.post("/copilot/question", response_model=CopilotQuestionResponse)
 async def copilot_question(payload: CopilotQuestionRequest) -> CopilotQuestionResponse:
+    logger.info(
+        "copilot_request_received",
+        question_length=len(payload.question),
+        question_preview=payload.question[:80],
+    )
     result = orchestrator.run(payload.question)
-    return CopilotQuestionResponse(
+    response = CopilotQuestionResponse(
         answer=str(result["message"]),
         metadata=dict(result.get("metadata", {})),
     )
+    logger.info(
+        "copilot_request_done",
+        trace_id=response.metadata.get("trace_id"),
+        response_source=response.metadata.get("response_source"),
+        fallback_used=response.metadata.get("fallback_used"),
+        total_duration_ms=response.metadata.get("total_duration_ms"),
+        answer_length=len(response.answer),
+    )
+    return response

@@ -1,6 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from logging import getLogger
 from time import perf_counter
 from uuid import uuid4
 
@@ -10,8 +9,9 @@ from app.services.llm_service import LLMService
 from app.services.query_service import QueryService
 from app.utils.cache import InMemoryTTLCache
 from app.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
+from app.utils.logger import get_logger
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class Orchestrator:
@@ -57,6 +57,11 @@ class Orchestrator:
         cached_response = self.response_cache.get(response_key)
         if cached_response is not None:
             response_source = "response-cache"
+            logger.info(
+                "orchestrator_cache_hit",
+                trace_id=trace_id,
+                cache_level="response_cache",
+            )
             metadata = self._build_metadata(
                 trace_id=trace_id,
                 request_started_at=request_started_at,
@@ -73,6 +78,13 @@ class Orchestrator:
             step_name="query-plan",
             steps=steps,
             executor=lambda: self.query_service.build_query(user_input),
+        )
+        logger.info(
+            "orchestrator_intent_detected",
+            trace_id=trace_id,
+            intent=query_plan.intent,
+            entity=query_plan.entity,
+            operation=query_plan.operation,
         )
         data_key = (
             f"data:{query_plan.intent}:{query_plan.entity}:"
@@ -91,6 +103,12 @@ class Orchestrator:
                     executor=lambda: self.data_service.fetch_data(query_plan),
                 )
                 self.data_cache.set(data_key, data)
+                logger.info(
+                    "orchestrator_data_fetched",
+                    trace_id=trace_id,
+                    intent=query_plan.intent,
+                    data_keys=list(data.keys()) if isinstance(data, dict) else None,
+                )
             except RuntimeError:
                 fallback_used = True
                 response_source = "fallback"
@@ -118,11 +136,25 @@ class Orchestrator:
                 logger.warning(
                     "copilot_request_data_fallback", extra={"metadata": metadata}
                 )
+                logger.warning(
+                    "orchestrator_data_service_failed",
+                    trace_id=trace_id,
+                    intent=query_plan.intent,
+                    total_duration_ms=round(
+                        (perf_counter() - request_started_at) * 1000, 2
+                    ),
+                )
                 return self.response_builder.build(fallback_text, metadata)
         else:
             data_source = "data-cache"
             steps.append(
                 {"step": "data-fetch", "status": "cache-hit", "duration_ms": 0.0}
+            )
+            logger.info(
+                "orchestrator_cache_hit",
+                trace_id=trace_id,
+                cache_level="data_cache",
+                intent=query_plan.intent,
             )
 
         try:
@@ -133,6 +165,11 @@ class Orchestrator:
                 step_name="llm-generate",
                 executor=lambda: self.llm_service.generate_text(user_input, data),
             )
+            logger.info(
+                "orchestrator_llm_generated",
+                trace_id=trace_id,
+                answer_length=len(generated_text),
+            )
         except RuntimeError:
             fallback_used = True
             response_source = "fallback"
@@ -142,6 +179,11 @@ class Orchestrator:
                 executor=lambda: self.llm_service.generate_fallback_text(
                     user_input, data
                 ),
+            )
+            logger.warning(
+                "orchestrator_llm_failed",
+                trace_id=trace_id,
+                intent=getattr(query_plan, "intent", None),
             )
 
         self.response_cache.set(response_key, generated_text)
@@ -156,6 +198,14 @@ class Orchestrator:
             intent=getattr(query_plan, "intent", None),
         )
         logger.info("copilot_request_completed", extra={"metadata": metadata})
+        logger.info(
+            "orchestrator_request_completed",
+            trace_id=trace_id,
+            intent=getattr(query_plan, "intent", None),
+            response_source=response_source,
+            fallback_used=fallback_used,
+            total_duration_ms=round((perf_counter() - request_started_at) * 1000, 2),
+        )
         return self.response_builder.build(generated_text, metadata)
 
     def _run_step(self, step_name: str, steps: list[dict[str, object]], executor):
