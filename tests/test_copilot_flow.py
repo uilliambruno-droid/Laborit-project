@@ -259,3 +259,45 @@ def test_orchestrator_opens_data_circuit_breaker_after_retries() -> None:
     breaker_state = result["metadata"]["circuit_breakers"]["data_service"]["state"]
     assert breaker_state in {"closed", "open"}
     assert result["metadata"]["response_source"] == "fallback"
+
+
+def test_orchestrator_simulates_data_timeout() -> None:
+    orchestrator = create_test_orchestrator()
+
+    result = orchestrator.run(
+        "[[simulate:data-timeout]] How many customers do we have?"
+    )
+
+    assert result["metadata"]["fallback_used"] is True
+    assert result["metadata"]["response_source"] == "fallback"
+    assert result["metadata"]["simulation"]["enabled"] is True
+    assert "data-timeout" in result["metadata"]["simulation"]["scenarios"]
+    assert result["metadata"]["cache"]["response_cache"] == "bypass-simulation"
+
+
+def test_orchestrator_simulates_llm_error() -> None:
+    orchestrator = create_test_orchestrator()
+
+    result = orchestrator.run("[[simulate:llm-error]] How many customers do we have?")
+
+    assert result["metadata"]["fallback_used"] is True
+    assert result["metadata"]["response_source"] == "fallback"
+    assert result["metadata"]["simulation"]["enabled"] is True
+    assert "llm-error" in result["metadata"]["simulation"]["scenarios"]
+
+
+def test_endpoint_simulates_data_service_error(monkeypatch) -> None:
+    monkeypatch.setattr(routes, "orchestrator", create_test_orchestrator())
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/copilot/question",
+        json={"question": "[[simulate:data-error]] How many customers do we have?"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["metadata"]["fallback_used"] is True
+    assert payload["metadata"]["response_source"] == "fallback"
+    assert payload["metadata"]["simulation"]["enabled"] is True
+    assert "data-error" in payload["metadata"]["simulation"]["scenarios"]

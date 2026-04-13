@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from logging import getLogger
-from time import perf_counter
+from time import perf_counter, sleep
 from uuid import uuid4
 
 from app.builder.response_builder import ResponseBuilder
@@ -15,6 +15,13 @@ logger = getLogger(__name__)
 
 
 class Orchestrator:
+    SIMULATION_MARKERS = {
+        "[[simulate:data-timeout]]": "data-timeout",
+        "[[simulate:data-error]]": "data-error",
+        "[[simulate:llm-timeout]]": "llm-timeout",
+        "[[simulate:llm-error]]": "llm-error",
+    }
+
     def __init__(
         self,
         query_service: QueryService | None = None,
@@ -46,6 +53,10 @@ class Orchestrator:
         self.retry_attempts = retry_attempts
 
     def run(self, user_input: str) -> dict[str, object]:
+        normalized_input, simulation_scenarios = self._extract_simulation_scenarios(
+            user_input
+        )
+        simulation_enabled = bool(simulation_scenarios)
         trace_id = str(uuid4())
         request_started_at = perf_counter()
         steps: list[dict[str, object]] = []
@@ -53,8 +64,11 @@ class Orchestrator:
         response_source = "generated"
         data_source = "database"
 
-        response_key = f"response:{user_input.strip().lower()}"
-        cached_response = self.response_cache.get(response_key)
+        response_key = f"response:{normalized_input.strip().lower()}"
+        cached_response = None
+        if not simulation_enabled:
+            cached_response = self.response_cache.get(response_key)
+
         if cached_response is not None:
             response_source = "response-cache"
             metadata = self._build_metadata(
@@ -66,21 +80,28 @@ class Orchestrator:
                 data_source="not-used",
                 cache_status={"response_cache": "hit", "data_cache": "not-used"},
                 intent=None,
+                simulation_scenarios=simulation_scenarios,
             )
             return self.response_builder.build(cached_response, metadata)
 
         query_plan = self._run_step(
             step_name="query-plan",
             steps=steps,
-            executor=lambda: self.query_service.build_query(user_input),
+            executor=lambda: self.query_service.build_query(normalized_input),
         )
         data_key = (
             f"data:{query_plan.intent}:{query_plan.entity}:"
             f"{query_plan.operation}:{query_plan.limit}"
         )
 
-        data = self.data_cache.get(data_key)
-        data_cache_status = "hit" if data is not None else "miss"
+        data = None
+        data_cache_status = "miss"
+        if not simulation_enabled:
+            data = self.data_cache.get(data_key)
+            data_cache_status = "hit" if data is not None else "miss"
+        else:
+            data_cache_status = "bypass-simulation"
+
         if data is None:
             try:
                 data = self._run_with_resilience(
@@ -88,9 +109,13 @@ class Orchestrator:
                     timeout_seconds=self.data_timeout_seconds,
                     steps=steps,
                     step_name="data-fetch",
-                    executor=lambda: self.data_service.fetch_data(query_plan),
+                    executor=lambda: self._execute_data_step(
+                        query_plan,
+                        simulation_scenarios,
+                    ),
                 )
-                self.data_cache.set(data_key, data)
+                if not simulation_enabled:
+                    self.data_cache.set(data_key, data)
             except RuntimeError:
                 fallback_used = True
                 response_source = "fallback"
@@ -98,7 +123,7 @@ class Orchestrator:
                     step_name="data-fallback",
                     steps=steps,
                     executor=lambda: self.llm_service.generate_fallback_text(
-                        user_input,
+                        normalized_input,
                         None,
                     ),
                 )
@@ -110,10 +135,13 @@ class Orchestrator:
                     response_source=response_source,
                     data_source="unavailable",
                     cache_status={
-                        "response_cache": "miss",
+                        "response_cache": (
+                            "bypass-simulation" if simulation_enabled else "miss"
+                        ),
                         "data_cache": data_cache_status,
                     },
                     intent=getattr(query_plan, "intent", None),
+                    simulation_scenarios=simulation_scenarios,
                 )
                 logger.warning(
                     "copilot_request_data_fallback", extra={"metadata": metadata}
@@ -131,7 +159,11 @@ class Orchestrator:
                 timeout_seconds=self.llm_timeout_seconds,
                 steps=steps,
                 step_name="llm-generate",
-                executor=lambda: self.llm_service.generate_text(user_input, data),
+                executor=lambda: self._execute_llm_step(
+                    normalized_input,
+                    data,
+                    simulation_scenarios,
+                ),
             )
         except RuntimeError:
             fallback_used = True
@@ -140,11 +172,13 @@ class Orchestrator:
                 step_name="llm-fallback",
                 steps=steps,
                 executor=lambda: self.llm_service.generate_fallback_text(
-                    user_input, data
+                    normalized_input,
+                    data,
                 ),
             )
 
-        self.response_cache.set(response_key, generated_text)
+        if not simulation_enabled:
+            self.response_cache.set(response_key, generated_text)
         metadata = self._build_metadata(
             trace_id=trace_id,
             request_started_at=request_started_at,
@@ -152,11 +186,53 @@ class Orchestrator:
             fallback_used=fallback_used,
             response_source=response_source,
             data_source=data_source,
-            cache_status={"response_cache": "miss", "data_cache": data_cache_status},
+            cache_status={
+                "response_cache": "bypass-simulation" if simulation_enabled else "miss",
+                "data_cache": data_cache_status,
+            },
             intent=getattr(query_plan, "intent", None),
+            simulation_scenarios=simulation_scenarios,
         )
         logger.info("copilot_request_completed", extra={"metadata": metadata})
         return self.response_builder.build(generated_text, metadata)
+
+    def _extract_simulation_scenarios(self, user_input: str) -> tuple[str, list[str]]:
+        normalized_input = user_input
+        scenarios: list[str] = []
+
+        for marker, scenario in self.SIMULATION_MARKERS.items():
+            if marker in normalized_input:
+                normalized_input = normalized_input.replace(marker, " ")
+                scenarios.append(scenario)
+
+        return normalized_input.strip(), scenarios
+
+    def _execute_data_step(
+        self,
+        query_plan,
+        simulation_scenarios: list[str],
+    ) -> dict[str, object]:
+        if "data-error" in simulation_scenarios:
+            raise RuntimeError("simulated data service error")
+
+        if "data-timeout" in simulation_scenarios:
+            sleep(self.data_timeout_seconds + 0.05)
+
+        return self.data_service.fetch_data(query_plan)
+
+    def _execute_llm_step(
+        self,
+        user_input: str,
+        data: dict[str, object],
+        simulation_scenarios: list[str],
+    ) -> str:
+        if "llm-error" in simulation_scenarios:
+            raise RuntimeError("simulated llm service error")
+
+        if "llm-timeout" in simulation_scenarios:
+            sleep(self.llm_timeout_seconds + 0.05)
+
+        return self.llm_service.generate_text(user_input, data)
 
     def _run_step(self, step_name: str, steps: list[dict[str, object]], executor):
         started_at = perf_counter()
@@ -245,8 +321,9 @@ class Orchestrator:
         data_source: str,
         cache_status: dict[str, str],
         intent: str | None,
+        simulation_scenarios: list[str] | None = None,
     ) -> dict[str, object]:
-        return {
+        metadata: dict[str, object] = {
             "trace_id": trace_id,
             "intent": intent,
             "fallback_used": fallback_used,
@@ -263,3 +340,11 @@ class Orchestrator:
             "steps": steps,
             "total_duration_ms": round((perf_counter() - request_started_at) * 1000, 2),
         }
+
+        if simulation_scenarios:
+            metadata["simulation"] = {
+                "enabled": True,
+                "scenarios": simulation_scenarios,
+            }
+
+        return metadata

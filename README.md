@@ -84,6 +84,24 @@ The current implementation already includes:
 - `metadata.steps`: step-by-step execution timing;
 - `metadata.fallback_used`: whether a degraded response was required.
 
+### Error simulation (QA)
+
+For controlled resilience tests, the question can include simulation markers.
+When any marker is present, cache is bypassed and `metadata.simulation` is included.
+
+- `[[simulate:data-timeout]]` → forces timeout in `data_service`
+- `[[simulate:data-error]]` → forces runtime error in `data_service`
+- `[[simulate:llm-timeout]]` → forces timeout in `llm_service`
+- `[[simulate:llm-error]]` → forces runtime error in `llm_service`
+
+Example:
+
+```json
+{
+	"question": "[[simulate:llm-error]] How many customers do we have?"
+}
+```
+
 ## Database integration
 
 Database connection is now implemented with SQLAlchemy + MySQL driver.
