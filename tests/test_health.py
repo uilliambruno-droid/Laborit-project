@@ -53,3 +53,27 @@ def test_database_health_missing_env_vars_returns_safe_message(monkeypatch) -> N
     assert "laborit" not in str(data).lower()
     assert "northwind-mysql-db" not in str(data)
     assert data["status"] == "unavailable"
+
+
+def test_copilot_question_endpoint_success() -> None:
+    response = client.post(
+        "/api/copilot/question",
+        json={"question": "Which customers should I prioritize this week?"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert "answer" in payload
+    assert isinstance(payload["answer"], str)
+
+
+def test_copilot_question_endpoint_rejects_blank_question() -> None:
+    response = client.post("/api/copilot/question", json={"question": "     "})
+    assert response.status_code == 422
+
+
+def test_copilot_question_endpoint_rejects_extra_fields() -> None:
+    response = client.post(
+        "/api/copilot/question",
+        json={"question": "How many active clients do I have?", "debug": True},
+    )
+    assert response.status_code == 422
