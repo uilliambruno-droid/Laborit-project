@@ -84,6 +84,21 @@ The current implementation already includes:
 - `metadata.steps`: step-by-step execution timing;
 - `metadata.fallback_used`: whether a degraded response was required.
 
+When a recoverable failure happens, the API still returns a friendly answer and
+adds `metadata.error`:
+
+- `metadata.error.code`: normalized machine-readable error code;
+- `metadata.error.source`: failing layer (`query_service`, `data_service`, `llm_service`, `orchestrator`);
+- `metadata.error.category`: failure class (`validation`, `timeout`, `dependency`, `resilience`, `internal`);
+- `metadata.error.retriable`: whether the client may retry.
+
+Examples of mapped error codes:
+
+- `QUERY_PLAN_ERROR`
+- `DATA_TIMEOUT`, `DATA_CIRCUIT_OPEN`, `DATA_SERVICE_ERROR`
+- `LLM_TIMEOUT`, `LLM_CIRCUIT_OPEN`, `LLM_SERVICE_ERROR`
+- `INTERNAL_ERROR`
+
 ## Database integration
 
 Database connection is now implemented with SQLAlchemy + MySQL driver.

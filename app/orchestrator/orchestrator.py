@@ -10,6 +10,13 @@ from app.services.llm_service import LLMService
 from app.services.query_service import QueryService
 from app.utils.cache import InMemoryTTLCache
 from app.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
+from app.utils.errors import (
+    FALLBACK_GENERATION_ERROR,
+    QUERY_PLAN_ERROR,
+    StepExecutionError,
+    descriptor_to_metadata,
+    map_step_error,
+)
 
 logger = getLogger(__name__)
 
@@ -52,6 +59,7 @@ class Orchestrator:
         fallback_used = False
         response_source = "generated"
         data_source = "database"
+        error_details: dict[str, object] | None = None
 
         response_key = f"response:{user_input.strip().lower()}"
         cached_response = self.response_cache.get(response_key)
@@ -66,14 +74,36 @@ class Orchestrator:
                 data_source="not-used",
                 cache_status={"response_cache": "hit", "data_cache": "not-used"},
                 intent=None,
+                error_details=error_details,
             )
             return self.response_builder.build(cached_response, metadata)
 
-        query_plan = self._run_step(
-            step_name="query-plan",
-            steps=steps,
-            executor=lambda: self.query_service.build_query(user_input),
-        )
+        try:
+            query_plan = self._run_step(
+                step_name="query-plan",
+                steps=steps,
+                executor=lambda: self.query_service.build_query(user_input),
+            )
+        except Exception:
+            fallback_used = True
+            response_source = "friendly-error"
+            error_details = descriptor_to_metadata(QUERY_PLAN_ERROR)
+            metadata = self._build_metadata(
+                trace_id=trace_id,
+                request_started_at=request_started_at,
+                steps=steps,
+                fallback_used=fallback_used,
+                response_source=response_source,
+                data_source="not-used",
+                cache_status={"response_cache": "miss", "data_cache": "not-used"},
+                intent=None,
+                error_details=error_details,
+            )
+            logger.warning(
+                "copilot_request_query_plan_failed", extra={"metadata": metadata}
+            )
+            return self.response_builder.build(QUERY_PLAN_ERROR.user_message, metadata)
+
         data_key = (
             f"data:{query_plan.intent}:{query_plan.entity}:"
             f"{query_plan.operation}:{query_plan.limit}"
@@ -88,19 +118,18 @@ class Orchestrator:
                     timeout_seconds=self.data_timeout_seconds,
                     steps=steps,
                     step_name="data-fetch",
+                    error_source="data_service",
                     executor=lambda: self.data_service.fetch_data(query_plan),
                 )
                 self.data_cache.set(data_key, data)
-            except RuntimeError:
+            except StepExecutionError as error:
                 fallback_used = True
                 response_source = "fallback"
+                error_details = descriptor_to_metadata(map_step_error(error))
                 fallback_text = self._run_step(
                     step_name="data-fallback",
                     steps=steps,
-                    executor=lambda: self.llm_service.generate_fallback_text(
-                        user_input,
-                        None,
-                    ),
+                    executor=lambda: self._safe_fallback_text(user_input, None),
                 )
                 metadata = self._build_metadata(
                     trace_id=trace_id,
@@ -114,6 +143,7 @@ class Orchestrator:
                         "data_cache": data_cache_status,
                     },
                     intent=getattr(query_plan, "intent", None),
+                    error_details=error_details,
                 )
                 logger.warning(
                     "copilot_request_data_fallback", extra={"metadata": metadata}
@@ -131,17 +161,17 @@ class Orchestrator:
                 timeout_seconds=self.llm_timeout_seconds,
                 steps=steps,
                 step_name="llm-generate",
+                error_source="llm_service",
                 executor=lambda: self.llm_service.generate_text(user_input, data),
             )
-        except RuntimeError:
+        except StepExecutionError as error:
             fallback_used = True
             response_source = "fallback"
+            error_details = descriptor_to_metadata(map_step_error(error))
             generated_text = self._run_step(
                 step_name="llm-fallback",
                 steps=steps,
-                executor=lambda: self.llm_service.generate_fallback_text(
-                    user_input, data
-                ),
+                executor=lambda: self._safe_fallback_text(user_input, data),
             )
 
         self.response_cache.set(response_key, generated_text)
@@ -154,6 +184,7 @@ class Orchestrator:
             data_source=data_source,
             cache_status={"response_cache": "miss", "data_cache": data_cache_status},
             intent=getattr(query_plan, "intent", None),
+            error_details=error_details,
         )
         logger.info("copilot_request_completed", extra={"metadata": metadata})
         return self.response_builder.build(generated_text, metadata)
@@ -176,9 +207,11 @@ class Orchestrator:
         timeout_seconds: float,
         steps: list[dict[str, object]],
         step_name: str,
+        error_source: str,
         executor,
     ):
         last_error: Exception | None = None
+        last_reason = "execution_error"
 
         for attempt in range(1, self.retry_attempts + 1):
             started_at = perf_counter()
@@ -206,10 +239,16 @@ class Orchestrator:
                         "attempt": attempt,
                     }
                 )
-                raise RuntimeError(str(error)) from error
+                raise StepExecutionError(
+                    step_name=step_name,
+                    reason="circuit_open",
+                    source=error_source,
+                    retriable=True,
+                ) from error
             except FutureTimeoutError as error:
                 breaker.record_failure()
                 last_error = error
+                last_reason = "timeout"
                 steps.append(
                     {
                         "step": step_name,
@@ -223,6 +262,7 @@ class Orchestrator:
             ) as error:  # pragma: no cover - exercised in tests through failures
                 breaker.record_failure()
                 last_error = error
+                last_reason = "execution_error"
                 steps.append(
                     {
                         "step": step_name,
@@ -233,7 +273,20 @@ class Orchestrator:
                     }
                 )
 
-        raise RuntimeError(f"Step '{step_name}' failed after retries") from last_error
+        raise StepExecutionError(
+            step_name=step_name,
+            reason=last_reason,
+            source=error_source,
+            retriable=True,
+        ) from last_error
+
+    def _safe_fallback_text(
+        self, user_input: str, data: dict[str, object] | None
+    ) -> str:
+        try:
+            return self.llm_service.generate_fallback_text(user_input, data)
+        except Exception:
+            return FALLBACK_GENERATION_ERROR.user_message
 
     def _build_metadata(
         self,
@@ -245,8 +298,9 @@ class Orchestrator:
         data_source: str,
         cache_status: dict[str, str],
         intent: str | None,
+        error_details: dict[str, object] | None = None,
     ) -> dict[str, object]:
-        return {
+        metadata: dict[str, object] = {
             "trace_id": trace_id,
             "intent": intent,
             "fallback_used": fallback_used,
@@ -263,3 +317,8 @@ class Orchestrator:
             "steps": steps,
             "total_duration_ms": round((perf_counter() - request_started_at) * 1000, 2),
         }
+
+        if error_details is not None:
+            metadata["error"] = error_details
+
+        return metadata

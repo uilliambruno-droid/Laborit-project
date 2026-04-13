@@ -224,6 +224,29 @@ class FailingDataService:
         raise RuntimeError("database unavailable")
 
 
+class FailingQueryService:
+    def build_query(self, user_input: str) -> QueryPlan:
+        raise ValueError("invalid query")
+
+
+class SlowDataService:
+    def fetch_data(self, query: QueryPlan) -> dict[str, object]:
+        import time
+
+        time.sleep(0.05)
+        return {"intent": query.intent, "entity": query.entity, "total": 2}
+
+
+class FailingFallbackLLMService:
+    def generate_text(self, user_input: str, data: dict[str, object]) -> str:
+        raise RuntimeError("llm unavailable")
+
+    def generate_fallback_text(
+        self, user_input: str, data: dict[str, object] | None = None
+    ) -> str:
+        raise RuntimeError("fallback unavailable")
+
+
 def test_orchestrator_uses_llm_fallback_on_generation_error() -> None:
     orchestrator = Orchestrator(
         query_service=QueryService(),
@@ -259,3 +282,52 @@ def test_orchestrator_opens_data_circuit_breaker_after_retries() -> None:
     breaker_state = result["metadata"]["circuit_breakers"]["data_service"]["state"]
     assert breaker_state in {"closed", "open"}
     assert result["metadata"]["response_source"] == "fallback"
+
+
+def test_orchestrator_returns_friendly_error_when_query_plan_fails() -> None:
+    orchestrator = Orchestrator(
+        query_service=FailingQueryService(),  # type: ignore[arg-type]
+        data_service=CountingDataService(),  # type: ignore[arg-type]
+        llm_service=LLMService(),
+        response_builder=ResponseBuilder(),
+    )
+
+    result = orchestrator.run("How many customers do we have?")
+
+    assert "interpret this question" in result["message"]
+    assert result["metadata"]["fallback_used"] is True
+    assert result["metadata"]["response_source"] == "friendly-error"
+    assert result["metadata"]["error"]["code"] == "QUERY_PLAN_ERROR"
+
+
+def test_orchestrator_marks_data_timeout_with_friendly_error_metadata() -> None:
+    orchestrator = Orchestrator(
+        query_service=QueryService(),
+        data_service=SlowDataService(),  # type: ignore[arg-type]
+        llm_service=LLMService(),
+        response_builder=ResponseBuilder(),
+        data_timeout_seconds=0.001,
+        retry_attempts=1,
+    )
+
+    result = orchestrator.run("How many customers do we have?")
+
+    assert result["metadata"]["fallback_used"] is True
+    assert result["metadata"]["error"]["code"] == "DATA_TIMEOUT"
+    assert result["metadata"]["error"]["source"] == "data_service"
+
+
+def test_orchestrator_returns_safe_text_when_llm_and_fallback_both_fail() -> None:
+    orchestrator = Orchestrator(
+        query_service=QueryService(),
+        data_service=CountingDataService(),  # type: ignore[arg-type]
+        llm_service=FailingFallbackLLMService(),  # type: ignore[arg-type]
+        response_builder=ResponseBuilder(),
+        retry_attempts=1,
+    )
+
+    result = orchestrator.run("How many customers do we have?")
+
+    assert "retry in a few seconds" in result["message"]
+    assert result["metadata"]["fallback_used"] is True
+    assert result["metadata"]["error"]["code"] == "LLM_SERVICE_ERROR"
