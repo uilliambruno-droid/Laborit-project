@@ -1,12 +1,4 @@
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class QueryPlan:
-    intent: str
-    entity: str
-    operation: str
-    limit: int = 5
+from app.domain.query import QueryIntent, QueryPlan
 
 
 class QueryService:
@@ -29,7 +21,9 @@ class QueryService:
                 ]
             ):
                 return QueryPlan(
-                    intent="count_customers", entity="customers", operation="count"
+                    intent=QueryIntent.COUNT_CUSTOMERS,
+                    entity="customers",
+                    operation="count",
                 )
             if any(
                 word in normalized
@@ -43,13 +37,17 @@ class QueryService:
                 ]
             ):
                 return QueryPlan(
-                    intent="count_employees", entity="employees", operation="count"
+                    intent=QueryIntent.COUNT_EMPLOYEES,
+                    entity="employees",
+                    operation="count",
                 )
             if any(
                 word in normalized for word in ["order", "orders", "pedido", "pedidos"]
             ):
                 return QueryPlan(
-                    intent="count_orders", entity="orders", operation="count"
+                    intent=QueryIntent.COUNT_ORDERS,
+                    entity="orders",
+                    operation="count",
                 )
 
         if any(
@@ -65,12 +63,15 @@ class QueryService:
             ]
         ):
             return QueryPlan(
-                intent="top_products_by_stock",
+                intent=QueryIntent.TOP_PRODUCTS_BY_STOCK,
                 entity="products",
                 operation="list",
                 limit=5,
             )
 
         return QueryPlan(
-            intent="customer_overview", entity="customers", operation="list", limit=5
+            intent=QueryIntent.CUSTOMER_OVERVIEW,
+            entity="customers",
+            operation="list",
+            limit=5,
         )

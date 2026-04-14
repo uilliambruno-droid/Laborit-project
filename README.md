@@ -11,7 +11,11 @@ project/
 │   ├── api/
 │   │   └── routes.py
 │   ├── orchestrator/
-│   │   └── orchestrator.py
+│   │   ├── orchestrator.py
+│   │   ├── resilience.py
+│   │   └── metadata.py
+│   ├── domain/
+│   │   └── query.py
 │   ├── services/
 │   │   ├── llm_service.py
 │   │   ├── query_service.py
@@ -61,6 +65,24 @@ The request path now includes orchestration, caching, resilience and transparenc
 6. `LLMService` transforms structured data into the final answer.
 7. `ResponseBuilder` returns the answer plus execution metadata.
 
+## Refactored architecture
+
+To reduce coupling and improve maintainability, orchestration responsibilities are now split into focused modules:
+
+- `app/domain/query.py`:
+	- `QueryIntent` enum (single source of truth for intents)
+	- `QueryPlan` dataclass with helper `data_cache_key()`
+- `app/orchestrator/resilience.py`:
+	- `run_step()` for step timing and tracing
+	- `run_with_resilience()` for retry/timeout/circuit-breaker flow
+- `app/orchestrator/metadata.py`:
+	- `build_request_metadata()` for a single metadata contract
+- `app/orchestrator/orchestrator.py`:
+	- keeps high-level request flow only
+	- delegates resilience and metadata assembly to dedicated modules
+
+This separation keeps business flow readable while preserving behavior.
+
 ## Resilience and observability
 
 The current implementation already includes:
@@ -72,6 +94,13 @@ The current implementation already includes:
 - circuit breaker state metadata for data and llm layers;
 - retry + timeout handling inside the orchestrator;
 - fallback response when data or llm generation fails.
+
+### Design decisions
+
+- `QueryIntent` as enum avoids scattered raw strings and typo-driven bugs.
+- Cache key generation moved to `QueryPlan.data_cache_key()` to centralize key policy.
+- Metadata creation extracted so contract changes happen in one place.
+- Resilience engine extracted so retry/timeout/circuit logic is reusable and testable.
 
 ### Response contract
 

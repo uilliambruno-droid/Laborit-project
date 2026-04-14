@@ -3,11 +3,11 @@ from collections.abc import Callable
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
+from app.domain.query import QueryIntent, QueryPlan
 from app.models.customer import Customer
 from app.models.employee import Employee
 from app.models.order import Order
 from app.models.product import Product
-from app.services.query_service import QueryPlan
 from app.utils.database import get_session_factory
 
 
@@ -17,33 +17,34 @@ class DataService:
 
     def fetch_data(self, query: QueryPlan) -> dict[str, object]:
         session_factory = self.session_factory or get_session_factory()
+        intent_value = query.intent.value
 
         with session_factory() as session:
-            if query.intent == "count_customers":
+            if query.intent == QueryIntent.COUNT_CUSTOMERS:
                 total = session.scalar(select(func.count()).select_from(Customer)) or 0
                 return {
-                    "intent": query.intent,
+                    "intent": intent_value,
                     "entity": query.entity,
                     "total": int(total),
                 }
 
-            if query.intent == "count_employees":
+            if query.intent == QueryIntent.COUNT_EMPLOYEES:
                 total = session.scalar(select(func.count()).select_from(Employee)) or 0
                 return {
-                    "intent": query.intent,
+                    "intent": intent_value,
                     "entity": query.entity,
                     "total": int(total),
                 }
 
-            if query.intent == "count_orders":
+            if query.intent == QueryIntent.COUNT_ORDERS:
                 total = session.scalar(select(func.count()).select_from(Order)) or 0
                 return {
-                    "intent": query.intent,
+                    "intent": intent_value,
                     "entity": query.entity,
                     "total": int(total),
                 }
 
-            if query.intent == "top_products_by_stock":
+            if query.intent == QueryIntent.TOP_PRODUCTS_BY_STOCK:
                 statement: Select[tuple[Product]] = (
                     select(Product)
                     .order_by(
@@ -54,7 +55,7 @@ class DataService:
                 )
                 products = session.scalars(statement).all()
                 return {
-                    "intent": query.intent,
+                    "intent": intent_value,
                     "entity": query.entity,
                     "records": [
                         {
@@ -74,7 +75,7 @@ class DataService:
             )
             customers = session.scalars(statement).all()
             return {
-                "intent": query.intent,
+                "intent": intent_value,
                 "entity": query.entity,
                 "records": [
                     {
