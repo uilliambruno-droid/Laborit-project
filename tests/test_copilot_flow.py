@@ -5,6 +5,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.api import routes
 from app.builder.response_builder import ResponseBuilder
+from app.domain.query import QueryPlan
 from app.main import app
 from app.models.base import Base
 from app.models.customer import Customer
@@ -14,7 +15,7 @@ from app.models.product import Product
 from app.orchestrator.orchestrator import Orchestrator
 from app.services.data_service import DataService
 from app.services.llm_service import LLMService
-from app.services.query_service import QueryPlan, QueryService
+from app.services.query_service import QueryService
 from app.utils.cache import InMemoryTTLCache
 
 

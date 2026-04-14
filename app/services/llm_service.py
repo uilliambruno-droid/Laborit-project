@@ -1,4 +1,10 @@
 class LLMService:
+    COUNT_INTENTS = {
+        "count_customers",
+        "count_employees",
+        "count_orders",
+    }
+
     def generate_text(self, user_input: str, data: dict[str, object]) -> str:
         intent = data.get("intent")
 
@@ -42,7 +48,7 @@ class LLMService:
             )
 
         intent = data.get("intent")
-        if intent in {"count_customers", "count_employees", "count_orders"}:
+        if intent in self.COUNT_INTENTS:
             total = data.get("total", 0)
             entity = str(data.get("entity", "records"))
             return f"Current fallback summary: there are {total} {entity} available."

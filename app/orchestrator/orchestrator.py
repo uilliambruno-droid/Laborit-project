@@ -1,15 +1,15 @@
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from logging import getLogger
 from time import perf_counter
 from uuid import uuid4
 
 from app.builder.response_builder import ResponseBuilder
+from app.orchestrator.metadata import build_request_metadata
+from app.orchestrator.resilience import run_step, run_with_resilience
 from app.services.data_service import DataService
 from app.services.llm_service import LLMService
 from app.services.query_service import QueryService
 from app.utils.cache import InMemoryTTLCache
-from app.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
+from app.utils.circuit_breaker import CircuitBreaker
 
 logger = getLogger(__name__)
 
@@ -74,10 +74,7 @@ class Orchestrator:
             steps=steps,
             executor=lambda: self.query_service.build_query(user_input),
         )
-        data_key = (
-            f"data:{query_plan.intent}:{query_plan.entity}:"
-            f"{query_plan.operation}:{query_plan.limit}"
-        )
+        data_key = query_plan.data_cache_key()
 
         data = self.data_cache.get(data_key)
         data_cache_status = "hit" if data is not None else "miss"
@@ -90,6 +87,7 @@ class Orchestrator:
                     step_name="data-fetch",
                     executor=lambda: self.data_service.fetch_data(query_plan),
                 )
+                data = self._normalize_data_payload(data)
                 self.data_cache.set(data_key, data)
             except RuntimeError:
                 fallback_used = True
@@ -113,13 +111,14 @@ class Orchestrator:
                         "response_cache": "miss",
                         "data_cache": data_cache_status,
                     },
-                    intent=getattr(query_plan, "intent", None),
+                    intent=query_plan.intent.value,
                 )
                 logger.warning(
                     "copilot_request_data_fallback", extra={"metadata": metadata}
                 )
                 return self.response_builder.build(fallback_text, metadata)
         else:
+            data = self._normalize_data_payload(data)
             data_source = "data-cache"
             steps.append(
                 {"step": "data-fetch", "status": "cache-hit", "duration_ms": 0.0}
@@ -153,22 +152,21 @@ class Orchestrator:
             response_source=response_source,
             data_source=data_source,
             cache_status={"response_cache": "miss", "data_cache": data_cache_status},
-            intent=getattr(query_plan, "intent", None),
+            intent=query_plan.intent.value,
         )
         logger.info("copilot_request_completed", extra={"metadata": metadata})
         return self.response_builder.build(generated_text, metadata)
 
+    def _normalize_data_payload(self, payload: dict[str, object]) -> dict[str, object]:
+        intent = payload.get("intent")
+        if hasattr(intent, "value"):
+            normalized = dict(payload)
+            normalized["intent"] = str(getattr(intent, "value"))
+            return normalized
+        return payload
+
     def _run_step(self, step_name: str, steps: list[dict[str, object]], executor):
-        started_at = perf_counter()
-        result = executor()
-        steps.append(
-            {
-                "step": step_name,
-                "status": "ok",
-                "duration_ms": round((perf_counter() - started_at) * 1000, 2),
-            }
-        )
-        return result
+        return run_step(step_name=step_name, steps=steps, executor=executor)
 
     def _run_with_resilience(
         self,
@@ -178,62 +176,14 @@ class Orchestrator:
         step_name: str,
         executor,
     ):
-        last_error: Exception | None = None
-
-        for attempt in range(1, self.retry_attempts + 1):
-            started_at = perf_counter()
-            try:
-                breaker.before_call()
-                with ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(executor)
-                    result = future.result(timeout=timeout_seconds)
-                breaker.record_success()
-                steps.append(
-                    {
-                        "step": step_name,
-                        "status": "ok",
-                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
-                        "attempt": attempt,
-                    }
-                )
-                return result
-            except CircuitBreakerOpenError as error:
-                steps.append(
-                    {
-                        "step": step_name,
-                        "status": "circuit-open",
-                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
-                        "attempt": attempt,
-                    }
-                )
-                raise RuntimeError(str(error)) from error
-            except FutureTimeoutError as error:
-                breaker.record_failure()
-                last_error = error
-                steps.append(
-                    {
-                        "step": step_name,
-                        "status": "timeout",
-                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
-                        "attempt": attempt,
-                    }
-                )
-            except (
-                Exception
-            ) as error:  # pragma: no cover - exercised in tests through failures
-                breaker.record_failure()
-                last_error = error
-                steps.append(
-                    {
-                        "step": step_name,
-                        "status": "error",
-                        "duration_ms": round((perf_counter() - started_at) * 1000, 2),
-                        "attempt": attempt,
-                        "error_type": error.__class__.__name__,
-                    }
-                )
-
-        raise RuntimeError(f"Step '{step_name}' failed after retries") from last_error
+        return run_with_resilience(
+            breaker=breaker,
+            timeout_seconds=timeout_seconds,
+            retry_attempts=self.retry_attempts,
+            steps=steps,
+            step_name=step_name,
+            executor=executor,
+        )
 
     def _build_metadata(
         self,
@@ -246,20 +196,16 @@ class Orchestrator:
         cache_status: dict[str, str],
         intent: str | None,
     ) -> dict[str, object]:
-        return {
-            "trace_id": trace_id,
-            "intent": intent,
-            "fallback_used": fallback_used,
-            "response_source": response_source,
-            "data_source": data_source,
-            "cache": {
-                **cache_status,
-                "backend": self.data_cache.backend_name,
-            },
-            "circuit_breakers": {
-                "data_service": self.data_circuit_breaker.snapshot().__dict__,
-                "llm_service": self.llm_circuit_breaker.snapshot().__dict__,
-            },
-            "steps": steps,
-            "total_duration_ms": round((perf_counter() - request_started_at) * 1000, 2),
-        }
+        return build_request_metadata(
+            trace_id=trace_id,
+            request_started_at=request_started_at,
+            steps=steps,
+            fallback_used=fallback_used,
+            response_source=response_source,
+            data_source=data_source,
+            cache_status=cache_status,
+            cache_backend=self.data_cache.backend_name,
+            data_breaker_snapshot=self.data_circuit_breaker.snapshot().__dict__,
+            llm_breaker_snapshot=self.llm_circuit_breaker.snapshot().__dict__,
+            intent=intent,
+        )
