@@ -8,7 +8,7 @@ from app.orchestrator.resilience import run_step, run_with_resilience
 from app.services.data_service import DataService
 from app.services.llm_service import LLMService
 from app.services.query_service import QueryService
-from app.utils.cache import InMemoryTTLCache
+from app.utils.cache import CacheBackend, create_cache_backend
 from app.utils.circuit_breaker import CircuitBreaker
 
 logger = getLogger(__name__)
@@ -21,20 +21,28 @@ class Orchestrator:
         data_service: DataService | None = None,
         llm_service: LLMService | None = None,
         response_builder: ResponseBuilder | None = None,
-        data_cache: InMemoryTTLCache[dict[str, object]] | None = None,
-        response_cache: InMemoryTTLCache[str] | None = None,
+        data_cache: CacheBackend[dict[str, object]] | None = None,
+        response_cache: CacheBackend[str] | None = None,
         data_circuit_breaker: CircuitBreaker | None = None,
         llm_circuit_breaker: CircuitBreaker | None = None,
         data_timeout_seconds: float = 3.0,
         llm_timeout_seconds: float = 3.0,
         retry_attempts: int = 2,
+        data_cache_ttl_seconds: int = 60,
+        response_cache_ttl_seconds: int = 60,
     ) -> None:
         self.query_service = query_service or QueryService()
         self.data_service = data_service or DataService()
         self.llm_service = llm_service or LLMService()
         self.response_builder = response_builder or ResponseBuilder()
-        self.data_cache = data_cache or InMemoryTTLCache(ttl_seconds=60)
-        self.response_cache = response_cache or InMemoryTTLCache(ttl_seconds=60)
+        self.data_cache = data_cache or create_cache_backend(
+            namespace="data",
+            ttl_seconds=data_cache_ttl_seconds,
+        )
+        self.response_cache = response_cache or create_cache_backend(
+            namespace="response",
+            ttl_seconds=response_cache_ttl_seconds,
+        )
         self.data_circuit_breaker = data_circuit_breaker or CircuitBreaker(
             name="data-service"
         )
@@ -204,7 +212,8 @@ class Orchestrator:
             response_source=response_source,
             data_source=data_source,
             cache_status=cache_status,
-            cache_backend=self.data_cache.backend_name,
+            response_cache_backend=self.response_cache.backend_name,
+            data_cache_backend=self.data_cache.backend_name,
             data_breaker_snapshot=self.data_circuit_breaker.snapshot().__dict__,
             llm_breaker_snapshot=self.llm_circuit_breaker.snapshot().__dict__,
             intent=intent,
