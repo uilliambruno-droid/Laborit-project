@@ -3,6 +3,8 @@ from time import perf_counter
 from uuid import uuid4
 
 from app.builder.response_builder import ResponseBuilder
+from app.domain.query import QueryPlan
+from app.i18n import detect_language, is_basic_question
 from app.orchestrator.metadata import build_request_metadata
 from app.orchestrator.resilience import run_step, run_with_resilience
 from app.services.data_service import DataService
@@ -10,6 +12,7 @@ from app.services.llm_service import LLMService
 from app.services.query_service import QueryService
 from app.utils.cache import CacheBackend, create_cache_backend
 from app.utils.circuit_breaker import CircuitBreaker
+from app.utils.database import check_database_connection
 
 logger = getLogger(__name__)
 
@@ -60,9 +63,12 @@ class Orchestrator:
         fallback_used = False
         response_source = "generated"
         data_source = "database"
+        normalized_user_input = user_input.strip().lower()
+        raw_response_key = f"response:{normalized_user_input}"
 
-        response_key = f"response:{user_input.strip().lower()}"
-        cached_response = self.response_cache.get(response_key)
+        self._try_recover_data_circuit_breaker(steps)
+
+        cached_response = self.response_cache.get(raw_response_key)
         if cached_response is not None:
             response_source = "response-cache"
             metadata = self._build_metadata(
@@ -77,11 +83,73 @@ class Orchestrator:
             )
             return self.response_builder.build(cached_response, metadata)
 
+        if is_basic_question(user_input):
+            language = detect_language(user_input)
+            guidance_key = f"response:guidance:{language}"
+            cached_response = self.response_cache.get(guidance_key)
+            if cached_response is not None:
+                response_source = "response-cache"
+                metadata = self._build_metadata(
+                    trace_id=trace_id,
+                    request_started_at=request_started_at,
+                    steps=steps,
+                    fallback_used=fallback_used,
+                    response_source=response_source,
+                    data_source="not-used",
+                    cache_status={"response_cache": "hit", "data_cache": "not-used"},
+                    intent="guidance",
+                )
+                self.response_cache.set(raw_response_key, cached_response)
+                return self.response_builder.build(cached_response, metadata)
+
+            guidance_text = self._run_step(
+                step_name="guidance",
+                steps=steps,
+                executor=lambda: self.llm_service.generate_guidance_text(user_input),
+            )
+            self.response_cache.set(raw_response_key, guidance_text)
+            self.response_cache.set(guidance_key, guidance_text)
+
+            metadata = self._build_metadata(
+                trace_id=trace_id,
+                request_started_at=request_started_at,
+                steps=steps,
+                fallback_used=fallback_used,
+                response_source="guidance",
+                data_source="not-required",
+                cache_status={"response_cache": "miss", "data_cache": "not-used"},
+                intent="guidance",
+            )
+            return self.response_builder.build(guidance_text, metadata)
+
         query_plan = self._run_step(
             step_name="query-plan",
             steps=steps,
             executor=lambda: self.query_service.build_query(user_input),
         )
+
+        language = detect_language(user_input)
+        semantic_response_key = self._semantic_response_cache_key(
+            query_plan=query_plan,
+            language=language,
+        )
+
+        cached_response = self.response_cache.get(semantic_response_key)
+        if cached_response is not None:
+            response_source = "response-cache"
+            metadata = self._build_metadata(
+                trace_id=trace_id,
+                request_started_at=request_started_at,
+                steps=steps,
+                fallback_used=fallback_used,
+                response_source=response_source,
+                data_source="not-used",
+                cache_status={"response_cache": "hit", "data_cache": "not-used"},
+                intent=query_plan.intent.value,
+            )
+            self.response_cache.set(raw_response_key, cached_response)
+            return self.response_builder.build(cached_response, metadata)
+
         data_key = query_plan.data_cache_key()
 
         data = self.data_cache.get(data_key)
@@ -151,7 +219,9 @@ class Orchestrator:
                 ),
             )
 
-        self.response_cache.set(response_key, generated_text)
+        self.response_cache.set(raw_response_key, generated_text)
+        if semantic_response_key != raw_response_key:
+            self.response_cache.set(semantic_response_key, generated_text)
         metadata = self._build_metadata(
             trace_id=trace_id,
             request_started_at=request_started_at,
@@ -164,6 +234,33 @@ class Orchestrator:
         )
         logger.info("copilot_request_completed", extra={"metadata": metadata})
         return self.response_builder.build(generated_text, metadata)
+
+    def _semantic_response_cache_key(self, query_plan: QueryPlan, language: str) -> str:
+        return (
+            "response:"
+            f"{query_plan.intent.value}:{query_plan.entity}:"
+            f"{query_plan.operation}:{query_plan.limit}:{language}"
+        )
+
+    def _try_recover_data_circuit_breaker(self, steps: list[dict[str, object]]) -> None:
+        if self.data_circuit_breaker.state != "open":
+            return
+
+        started_at = perf_counter()
+        is_connected, _ = check_database_connection()
+        if is_connected:
+            self.data_circuit_breaker.record_success()
+            status = "recovered"
+        else:
+            status = "unavailable"
+
+        steps.append(
+            {
+                "step": "data-circuit-recovery",
+                "status": status,
+                "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+            }
+        )
 
     def _normalize_data_payload(self, payload: dict[str, object]) -> dict[str, object]:
         intent = payload.get("intent")

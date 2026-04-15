@@ -61,6 +61,7 @@ project/
 
 - `GET /api/health`
 - `GET /api/health/database`
+- `GET /api/metrics`
 - `POST /api/copilot/question`
 
 #### Para que servem os endpoints de health?
@@ -69,6 +70,20 @@ project/
 - `GET /api/health/database`: confirma que a API também consegue se conectar ao banco.
 
 Eles **não fazem parte do fluxo de negócio** do copilot, mas são essenciais para deploy, monitoramento e troubleshooting.
+
+#### Segurança de acesso (API key)
+
+Se `API_KEY` estiver definida no ambiente, os endpoints abaixo exigem header `X-API-Key`:
+
+- `POST /api/copilot/question`
+- `GET /api/metrics`
+
+Exemplo:
+
+```bash
+export API_KEY=super-secret
+curl -H "X-API-Key: super-secret" http://localhost:8000/api/metrics
+```
 
 ---
 
@@ -153,6 +168,21 @@ Se `CACHE_BACKEND=redis` estiver configurado, mas Redis não estiver acessível,
 - `backend_name = in-memory-fallback`
 
 Isso evita indisponibilidade total da API por falha do cache distribuído.
+
+### Observabilidade operacional
+
+Além da `metadata` de cada resposta, a API agora expõe `GET /api/metrics` com visão agregada de execução:
+
+- volume HTTP total;
+- distribuição por endpoint e status code;
+- latência média e máxima;
+- total de requests do copilot;
+- total de fallbacks;
+- hits/misses de cache de resposta e dados.
+
+### Concorrência prática (estado atual)
+
+As rotas seguem `async` e o endpoint de pergunta executa o trecho síncrono pesado em threadpool (`run_in_threadpool`), reduzindo bloqueio do event loop e melhorando concorrência sob carga.
 
 ---
 
@@ -272,6 +302,7 @@ Isso evita indisponibilidade total da API por falha do cache distribuído.
 - `metadata.cache.backend`: backend agregado (`redis`, `in-memory`, `in-memory-fallback`, `mixed`);
 - `metadata.cache.response_backend`: backend do cache de resposta;
 - `metadata.cache.data_backend`: backend do cache de dados;
+- `metadata.explainability`: resumo do caminho de execução (`path`, `data_origin`, fallback e quantidade de etapas);
 - `metadata.steps`: execução por etapa;
 - `metadata.fallback_used`: indica resposta degradada;
 - `metadata.total_duration_ms`: duração total da requisição.
@@ -325,6 +356,7 @@ Isso evita indisponibilidade total da API por falha do cache distribuído.
 
 - uso de variáveis de ambiente para credenciais;
 - mensagens seguras de erro de banco;
+- proteção por `API_KEY` para endpoint de negócio e métricas;
 - separação mais clara das responsabilidades.
 
 **Próximos passos naturais:**
@@ -424,6 +456,7 @@ Dependencies are managed with **Poetry**, and persistence is handled via **SQLAl
 
 - `GET /api/health`
 - `GET /api/health/database`
+- `GET /api/metrics`
 - `POST /api/copilot/question`
 
 `/api/health` checks whether the API process is alive.
@@ -431,6 +464,20 @@ Dependencies are managed with **Poetry**, and persistence is handled via **SQLAl
 `/api/health/database` checks whether the API can also reach the database.
 
 These endpoints are **operational endpoints**, not part of the business request pipeline.
+
+#### Access security (API key)
+
+If `API_KEY` is set, the endpoints below require header `X-API-Key`:
+
+- `POST /api/copilot/question`
+- `GET /api/metrics`
+
+Example:
+
+```bash
+export API_KEY=super-secret
+curl -H "X-API-Key: super-secret" http://localhost:8000/api/metrics
+```
 
 ---
 
@@ -457,6 +504,21 @@ Optional local Redis with Docker:
 ```bash
 docker run --name laborit-redis -p 6379:6379 -d redis:7
 ```
+
+### Operational observability
+
+Beyond per-request `metadata`, the API now exposes `GET /api/metrics` with aggregated runtime visibility:
+
+- total HTTP volume;
+- per-endpoint and per-status distribution;
+- average and max latency;
+- total copilot requests;
+- total fallbacks;
+- response/data cache hit-miss counters.
+
+### Practical concurrency (current state)
+
+Routes remain `async`, and the heavy sync execution path in the question endpoint now runs through threadpool (`run_in_threadpool`), reducing event-loop blocking and improving concurrency under load.
 
 ---
 
@@ -531,6 +593,7 @@ docker run --name laborit-redis -p 6379:6379 -d redis:7
 - `metadata.cache.backend`
 - `metadata.cache.response_backend`
 - `metadata.cache.data_backend`
+- `metadata.explainability`
 - `metadata.steps`
 - `metadata.fallback_used`
 - `metadata.total_duration_ms`
@@ -559,7 +622,7 @@ docker run --name laborit-redis -p 6379:6379 -d redis:7
 
 #### 5) Security risks in data access
 
-**Current solution:** env-based credentials, safe DB error messages, clearer boundaries between layers.
+**Current solution:** env-based credentials, safe DB error messages, API key protection for business/metrics endpoints, clearer boundaries between layers.
 
 **Future work:** auth, auditing and sensitive-data masking.
 

@@ -108,3 +108,53 @@ def test_copilot_question_endpoint_rejects_extra_fields() -> None:
         json={"question": "How many active clients do I have?", "debug": True},
     )
     assert response.status_code == 422
+
+
+def test_copilot_question_endpoint_returns_friendly_validation_payload() -> None:
+    response = client.post("/api/copilot/question", json={"question": "Hi"})
+
+    assert response.status_code == 422
+    payload = response.json()
+    assert (
+        payload["message"] == "Invalid request payload. Check the fields and try again."
+    )
+    assert (
+        payload["message_pt"] == "Payload inválido. Revise os campos e tente novamente."
+    )
+    assert payload["errors"][0]["field"] == "question"
+    assert "at least 5 characters" in payload["errors"][0]["message"]
+
+
+def test_copilot_question_requires_api_key_when_configured(monkeypatch) -> None:
+    class FakeOrchestrator:
+        def run(self, user_input: str) -> dict[str, object]:
+            return {"message": f"mocked answer for: {user_input}", "metadata": {}}
+
+    routes.orchestrator = FakeOrchestrator()
+    monkeypatch.setenv("API_KEY", "secret-key")
+
+    unauthorized = client.post(
+        "/api/copilot/question",
+        json={"question": "How many customers do we have?"},
+    )
+    assert unauthorized.status_code == 401
+
+    authorized = client.post(
+        "/api/copilot/question",
+        json={"question": "How many customers do we have?"},
+        headers={"X-API-Key": "secret-key"},
+    )
+    assert authorized.status_code == 200
+
+
+def test_metrics_endpoint_security_and_response(monkeypatch) -> None:
+    monkeypatch.setenv("API_KEY", "metrics-key")
+
+    unauthorized = client.get("/api/metrics")
+    assert unauthorized.status_code == 401
+
+    authorized = client.get("/api/metrics", headers={"X-API-Key": "metrics-key"})
+    assert authorized.status_code == 200
+    payload = authorized.json()
+    assert "http" in payload
+    assert "copilot" in payload

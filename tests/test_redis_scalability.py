@@ -190,9 +190,10 @@ def test_orchestrator_uses_redis_data_cache_across_different_questions() -> None
     second = orchestrator.run("How many customers are there in total?")
 
     assert data_service.calls == 1
-    assert llm_service.calls == 2
+    assert llm_service.calls == 1
     assert first["metadata"]["cache"]["data_cache"] == "miss"
-    assert second["metadata"]["cache"]["data_cache"] == "hit"
+    assert second["metadata"]["cache"]["response_cache"] == "hit"
+    assert second["metadata"]["cache"]["data_cache"] == "not-used"
 
 
 def test_database_health_success_path(monkeypatch) -> None:

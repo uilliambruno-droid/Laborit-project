@@ -122,11 +122,13 @@ def test_llm_service_covers_fallback_paths() -> None:
         "hello",
         {"intent": "customer_overview", "records": []},
     )
+    pt_no_data = service.generate_fallback_text("Ola, tudo bem contigo?", None)
 
     assert "request was received" in no_data
     assert "3 orders" in count_fallback
     assert "2 records" in list_fallback
     assert "We received the question 'hello'" in generic_fallback
+    assert "solicitação foi recebida" in pt_no_data
 
 
 def test_data_service_customer_overview_branch() -> None:

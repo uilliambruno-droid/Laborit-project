@@ -10,6 +10,8 @@ from app.utils.cache import (
 )
 from app.utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
 from app.utils.database import check_database_connection, get_database_url, get_engine
+from app.utils.metrics import metrics_registry
+from app.utils.security import API_KEY_HEADER, get_expected_api_key, require_api_key
 
 __all__ = [
     "CacheBackend",
@@ -23,4 +25,8 @@ __all__ = [
     "check_database_connection",
     "get_database_url",
     "get_engine",
+    "metrics_registry",
+    "API_KEY_HEADER",
+    "get_expected_api_key",
+    "require_api_key",
 ]

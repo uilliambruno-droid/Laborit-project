@@ -1,8 +1,11 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from starlette.concurrency import run_in_threadpool
 
 from app.orchestrator.orchestrator import Orchestrator
 from app.utils.database import check_database_connection
+from app.utils.metrics import metrics_registry
+from app.utils.security import require_api_key
 
 router = APIRouter(prefix="/api", tags=["api"])
 orchestrator = Orchestrator()
@@ -41,15 +44,25 @@ async def health_check() -> dict[str, str]:
 
 @router.get("/health/database")
 async def database_health_check() -> dict[str, str]:
-    is_connected, detail = check_database_connection()
+    is_connected, detail = await run_in_threadpool(check_database_connection)
     status = "ok" if is_connected else "unavailable"
     return {"status": status, "detail": detail}
 
 
+@router.get("/metrics", dependencies=[Depends(require_api_key)])
+async def metrics_snapshot() -> dict[str, object]:
+    return metrics_registry.snapshot()
+
+
 @router.post("/copilot/question", response_model=CopilotQuestionResponse)
-async def copilot_question(payload: CopilotQuestionRequest) -> CopilotQuestionResponse:
-    result = orchestrator.run(payload.question)
+async def copilot_question(
+    payload: CopilotQuestionRequest,
+    _: None = Depends(require_api_key),
+) -> CopilotQuestionResponse:
+    result = await run_in_threadpool(orchestrator.run, payload.question)
+    metadata = dict(result.get("metadata", {}))
+    metrics_registry.record_copilot_metadata(metadata)
     return CopilotQuestionResponse(
         answer=str(result["message"]),
-        metadata=dict(result.get("metadata", {})),
+        metadata=metadata,
     )
