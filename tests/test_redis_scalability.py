@@ -1,9 +1,9 @@
 from redis.exceptions import RedisError
 
+import app.utils.database as database_module
 from app.builder.response_builder import ResponseBuilder
 from app.orchestrator.orchestrator import Orchestrator
 from app.services.query_service import QueryService
-import app.utils.database as database_module
 from app.utils.cache import (
     InMemoryTTLCache,
     RedisTTLCache,
@@ -114,7 +114,9 @@ def test_cache_helpers_and_redis_client_creation(monkeypatch) -> None:
     monkeypatch.setenv("REDIS_URL", "redis://cache:6379/1")
     monkeypatch.setenv("CACHE_PREFIX", "copilot")
     get_redis_client.cache_clear()
-    monkeypatch.setattr("app.utils.cache.Redis.from_url", lambda *args, **kwargs: fake_client)
+    monkeypatch.setattr(
+        "app.utils.cache.Redis.from_url", lambda *args, **kwargs: fake_client
+    )
 
     assert get_cache_backend_name() == "redis"
     assert get_redis_url() == "redis://cache:6379/1"
