@@ -23,6 +23,8 @@ Atualmente a arquitetura combina:
 
 Dependências são gerenciadas com **Poetry** e o acesso a dados é feito via **SQLAlchemy**.
 
+Runbook operacional detalhado: `docs/OPERATIONS_RUNBOOK.md`.
+
 ---
 
 ### Estrutura do projeto
@@ -449,6 +451,8 @@ The current architecture combines:
 - **modular architecture** for maintainability.
 
 Dependencies are managed with **Poetry**, and persistence is handled via **SQLAlchemy**.
+
+Detailed operations runbook: `docs/OPERATIONS_RUNBOOK.md`.
 
 ---
 
