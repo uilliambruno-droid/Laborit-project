@@ -17,6 +17,7 @@ from app.services.data_service import DataService
 from app.services.llm_service import LLMService
 from app.services.query_service import QueryService
 from app.utils.cache import InMemoryTTLCache
+from app.utils.circuit_breaker import CircuitBreaker
 
 
 def create_test_session_factory() -> sessionmaker:
@@ -114,6 +115,15 @@ def test_orchestrator_returns_top_products() -> None:
     assert "Chai (39 units)" in result["message"]
 
 
+def test_orchestrator_returns_portuguese_answer_for_portuguese_question() -> None:
+    orchestrator = create_test_orchestrator()
+
+    result = orchestrator.run("Quantos clientes temos?")
+
+    assert "Existem 2 clientes" in result["message"]
+    assert result["metadata"]["intent"] == "count_customers"
+
+
 def test_copilot_question_endpoint_uses_integrated_services(monkeypatch) -> None:
     monkeypatch.setattr(routes, "orchestrator", create_test_orchestrator())
     client = TestClient(app)
@@ -179,9 +189,31 @@ def test_orchestrator_uses_data_cache_for_same_intent() -> None:
     second = orchestrator.run("How many customers are there in total?")
 
     assert data_service.calls == 1
-    assert llm_service.calls == 2
+    assert llm_service.calls == 1
     assert "Synthetic answer for count_customers" in first["message"]
     assert "Synthetic answer for count_customers" in second["message"]
+    assert second["metadata"]["cache"]["response_cache"] == "hit"
+    assert second["metadata"]["cache"]["data_cache"] == "not-used"
+
+
+def test_orchestrator_uses_data_cache_for_equivalent_en_and_pt_questions() -> None:
+    data_service = CountingDataService()
+    orchestrator = Orchestrator(
+        query_service=QueryService(),
+        data_service=data_service,  # type: ignore[arg-type]
+        llm_service=LLMService(),
+        response_builder=ResponseBuilder(),
+        data_cache=InMemoryTTLCache(ttl_seconds=120),
+        response_cache=InMemoryTTLCache(ttl_seconds=120),
+    )
+
+    first = orchestrator.run("How many customers do we have?")
+    second = orchestrator.run("Quantos clientes temos?")
+
+    assert data_service.calls == 1
+    assert first["metadata"]["cache"]["data_cache"] == "miss"
+    assert second["metadata"]["cache"]["data_cache"] == "hit"
+    assert "Existem 2 clientes" in second["message"]
 
 
 def test_orchestrator_uses_response_cache_for_same_question() -> None:
@@ -260,3 +292,73 @@ def test_orchestrator_opens_data_circuit_breaker_after_retries() -> None:
     breaker_state = result["metadata"]["circuit_breakers"]["data_service"]["state"]
     assert breaker_state in {"closed", "open"}
     assert result["metadata"]["response_source"] == "fallback"
+
+
+def test_orchestrator_recovers_open_data_circuit_when_database_is_ok(
+    monkeypatch,
+) -> None:
+    data_service = CountingDataService()
+    orchestrator = Orchestrator(
+        query_service=QueryService(),
+        data_service=data_service,  # type: ignore[arg-type]
+        llm_service=LLMService(),
+        response_builder=ResponseBuilder(),
+        data_cache=InMemoryTTLCache(ttl_seconds=120),
+        response_cache=InMemoryTTLCache(ttl_seconds=120),
+        data_circuit_breaker=CircuitBreaker(name="data-service", failure_threshold=1),
+    )
+    orchestrator.data_circuit_breaker.state = "open"
+    orchestrator.data_circuit_breaker.opened_at = 999999.0
+    orchestrator.data_circuit_breaker.failure_count = 4
+
+    monkeypatch.setattr(
+        "app.orchestrator.orchestrator.check_database_connection",
+        lambda: (True, "Database connection ok"),
+    )
+
+    result = orchestrator.run("How many customers do we have?")
+
+    assert result["metadata"]["fallback_used"] is False
+    assert any(
+        step.get("step") == "data-circuit-recovery"
+        and step.get("status") == "recovered"
+        for step in result["metadata"]["steps"]
+    )
+
+
+def test_orchestrator_returns_guidance_for_basic_portuguese_question() -> None:
+    data_service = CountingDataService()
+    orchestrator = Orchestrator(
+        query_service=QueryService(),
+        data_service=data_service,  # type: ignore[arg-type]
+        llm_service=LLMService(),
+        response_builder=ResponseBuilder(),
+        data_cache=InMemoryTTLCache(ttl_seconds=120),
+        response_cache=InMemoryTTLCache(ttl_seconds=120),
+    )
+
+    result = orchestrator.run("Ola, tudo bem contigo? Me fale algo")
+
+    assert data_service.calls == 0
+    assert result["metadata"]["intent"] == "guidance"
+    assert result["metadata"]["response_source"] == "guidance"
+    assert "Posso ajudar com análises comerciais" in result["message"]
+
+
+def test_orchestrator_uses_guidance_cache_for_portuguese_basic_question() -> None:
+    data_service = CountingDataService()
+    orchestrator = Orchestrator(
+        query_service=QueryService(),
+        data_service=data_service,  # type: ignore[arg-type]
+        llm_service=LLMService(),
+        response_builder=ResponseBuilder(),
+        data_cache=InMemoryTTLCache(ttl_seconds=120),
+        response_cache=InMemoryTTLCache(ttl_seconds=120),
+    )
+
+    first = orchestrator.run("Ola, tudo bem contigo? Me fale algo")
+    second = orchestrator.run("Oi, tudo bem?")
+
+    assert data_service.calls == 0
+    assert first["metadata"]["cache"]["response_cache"] == "miss"
+    assert second["metadata"]["cache"]["response_cache"] == "hit"

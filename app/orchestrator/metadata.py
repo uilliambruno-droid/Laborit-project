@@ -21,6 +21,12 @@ def build_request_metadata(
         if response_cache_backend == data_cache_backend
         else "mixed"
     )
+    explainability_summary = {
+        "path": response_source,
+        "data_origin": data_source,
+        "fallback_used": fallback_used,
+        "steps_executed": len(steps),
+    }
     return {
         "trace_id": trace_id,
         "intent": intent,
@@ -37,6 +43,7 @@ def build_request_metadata(
             "data_service": data_breaker_snapshot,
             "llm_service": llm_breaker_snapshot,
         },
+        "explainability": explainability_summary,
         "steps": steps,
         "total_duration_ms": round((perf_counter() - request_started_at) * 1000, 2),
     }
