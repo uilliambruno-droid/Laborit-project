@@ -10,11 +10,17 @@ def build_request_metadata(
     response_source: str,
     data_source: str,
     cache_status: dict[str, str],
-    cache_backend: str,
+    response_cache_backend: str,
+    data_cache_backend: str,
     data_breaker_snapshot: dict[str, object],
     llm_breaker_snapshot: dict[str, object],
     intent: str | None,
 ) -> dict[str, object]:
+    merged_backend = (
+        response_cache_backend
+        if response_cache_backend == data_cache_backend
+        else "mixed"
+    )
     return {
         "trace_id": trace_id,
         "intent": intent,
@@ -23,7 +29,9 @@ def build_request_metadata(
         "data_source": data_source,
         "cache": {
             **cache_status,
-            "backend": cache_backend,
+            "backend": merged_backend,
+            "response_backend": response_cache_backend,
+            "data_backend": data_cache_backend,
         },
         "circuit_breakers": {
             "data_service": data_breaker_snapshot,
