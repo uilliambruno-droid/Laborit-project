@@ -1,31 +1,32 @@
-# 🚀 Quick Start - Deploy no Render em 10 Minutos
+# 🚀 Quick Start - Deploy no Render (Plano FREE)
 
 ## ⚡ Resumo Rápido
 
 ```
-[GitHub main branch] → [Render] → [MySQL + Redis] → ✅ Production
+[GitHub main branch] → [Render FREE] → [MySQL] → ✅ Production (Sem Redis!)
 ```
 
 ---
 
-## 1️⃣ Preparar Credenciais (2 min)
+## 1️⃣ Preparar Banco de Dados (2 min)
 
-### Banco de Dados MySQL
+### ✅ Opção Recomendada: PlanetScale (MySQL Cloud)
 
-**Opção rápida (recomendado):** PlanetScale (MySQL cloud)
-
-1. https://planetscale.com → Sign up
+1. https://planetscale.com → Sign up (grátis)
 2. Criar database: `laborit-db`
-3. Gerar connection string MySQL
-4. Copie: `mysql://user:pass@pscale_host:3306/laborit-db`
+3. Ir para **"Connections"** → Gerar **"Password"**
+4. Copiar connection string MySQL (formato: `mysql://user:pass@pscale_host:3306/laborit-db`)
 
-### Redis
+### ✅ Alternativa: Render MySQL (Grátis também)
 
-**Opção rápida:** Redis Cloud
+1. https://render.com/dashboard
+2. "New +" → "MySQL"
+3. Nome: `laborit-mysql`
+4. Copiar connection string
 
-1. https://redis.com/cloud → Sign up
-2. Criar database (Free tier)
-3. Copie: `redis://:password@host:port`
+### ⚠️ NÃO precisa de Redis!
+
+O sistema **já suporta cache em memória** (fallback automático). Redis era uma otimização opcional, não obrigatória.
 
 ---
 
@@ -50,25 +51,23 @@
 | **Environment** | `Python 3` |
 | **Build Cmd** | *(deixe o padrão)* |
 | **Start Cmd** | *(deixe o padrão)* |
-| **Plan** | `Standard ($7/mês)` |
+| **Plan** | ⭐ `Free` (não standard!) |
 | **Region** | `São Paulo` |
 | **Auto-deploy** | ✅ ON |
 
-### Passo 4: Adicionar Variáveis de Ambiente
+### Passo 4: Adicionar Variáveis de Ambiente (SIMPLES!)
 
-Clique em **"Environment"** e adicione:
+Clique em **"Environment"** e adicione APENAS:
 
 ```env
 DATABASE_URL=mysql://user:pass@pscale_host:3306/laborit-db
-REDIS_URL=redis://:password@host:port
-API_KEY=<gerar com: openssl rand -hex 32>
 ENVIRONMENT=production
 LOG_LEVEL=INFO
-CACHE_BACKEND=redis
-QUERY_TIMEOUT_MS=10000
-DATA_TIMEOUT_MS=15000
-LLM_TIMEOUT_MS=30000
+CACHE_BACKEND=inmemory
+API_KEY=<gerar com: openssl rand -hex 32>
 ```
+
+**Pronto! Sem Redis!**
 
 ### Passo 5: Criar
 - Clique **"Create Web Service"**
@@ -117,7 +116,46 @@ curl -X POST "$URL/api/copilot/question" \
 
 ---
 
-## 5️⃣ Troubleshooting Rápido
+## 5️⃣ Acessar Banco Direto (MySQL Workbench, DBeaver, etc)
+
+### 🔓 Sim! Você consegue acessar direto
+
+Use a mesma **DATABASE_URL**:
+
+```
+mysql://user:pass@pscale_host:3306/laborit-db
+```
+
+### Exemplo com MySQL CLI:
+
+```bash
+# Se usar PlanetScale
+mysql -u user -p -h pscale_host -P 3306 -D laborit-db
+
+# Enter password quando pedido
+# SELECT * FROM customers LIMIT 5;
+```
+
+### Exemplo com GUI:
+
+1. **MySQL Workbench**: File → New Connection
+   - Host: `pscale_host`
+   - Port: `3306`
+   - Username: `user`
+   - Password: `pass`
+   - Database: `laborit-db`
+
+2. **DBeaver**: New Database Connection
+   - Database: MySQL
+   - Server Host: `pscale_host`
+   - Port: 3306
+   - User: `user`
+   - Password: `pass`
+   - Database: `laborit-db`
+
+---
+
+## 6️⃣ Troubleshooting Rápido
 
 ### ❌ Build fails
 **Solução:** Render precisa instalar poetry. Já configurado em `render.yaml`.
@@ -126,34 +164,36 @@ curl -X POST "$URL/api/copilot/question" \
 **Verificar:**
 ```bash
 # Logs no Render Dashboard → "Logs" tab
-# Procure por: DATABASE_URL, REDIS_URL errors
+# Procure por: DATABASE_URL errors
 ```
 
 ### ❌ Database connection error
 ```bash
 # Testar conexão local
+mysql -u user -p -h host
+
+# Ou com Python:
 python -c "from sqlalchemy import create_engine; e = create_engine('DATABASE_URL'); print(e.connect())"
 ```
 
-### ❌ Timeout (jiahsdjdfhakfdhj error)
-**Solução:** O sistema já previne isso com guidance flow. Tente aumentar timeouts:
-```
-QUERY_TIMEOUT_MS=15000
-DATA_TIMEOUT_MS=20000
-LLM_TIMEOUT_MS=40000
-```
+### ❌ "Plano Free foi suspenso"
+- Render suspend apps free inativos por 15 minutos
+- Acesse https://seu-app.onrender.com para reativar
+- Ou faça um novo deploy (git push)
 
 ---
 
 ## 📋 Checklist Final
 
+- ✅ PlanetScale ou Render MySQL criado
+- ✅ DATABASE_URL copiada
 - ✅ `main` branch no GitHub atualizado
-- ✅ `render.yaml` presente
-- ✅ Serviço criado no Render
-- ✅ Variáveis de ambiente configuradas
+- ✅ Serviço criado no Render (plano FREE)
+- ✅ CACHE_BACKEND=inmemory (sem Redis!)
+- ✅ API_KEY gerada
 - ✅ Health check retorna `healthy`
 - ✅ Testes com API Key funcionam
-- ✅ Logs monitorados
+- ✅ Acessar banco direto via MySQL Workbench/CLI
 
 ---
 
@@ -162,36 +202,43 @@ LLM_TIMEOUT_MS=40000
 | Recurso | Link |
 |---------|------|
 | **Dashboard Render** | https://render.com/dashboard |
-| **Seu App** | https://seu-app.onrender.com |
-| **Seu App (Health)** | https://seu-app.onrender.com/api/health |
-| **Seu App (Docs)** | https://seu-app.onrender.com/docs |
+| **Seu App** | https://seu-app-name.onrender.com |
+| **Seu App (Health)** | https://seu-app-name.onrender.com/api/health |
+| **Seu App (Docs)** | https://seu-app-name.onrender.com/docs |
 | **Logs** | Dashboard → Seu serviço → "Logs" |
 | **GitHub Repo** | https://github.com/uilliambruno-droid/Laborit-project |
+| **PlanetScale** | https://planetscale.com |
 
 ---
 
-## 💡 Dicas Importantes
+## 💡 Por Que Sem Redis?
 
-1. **Auto-deploy**: Qualquer push para `main` redeploy automaticamente
-2. **Health check**: `/api/health` chamado a cada 30 segundos
-3. **Fallback**: Redis fora? Sistema cai para in-memory cache
-4. **Logs**: Acessar via Dashboard Render em tempo real
-5. **Alertas**: Ativar notificações de erro no Render Dashboard
+1. **Cache em memória é suficiente** para começar
+2. **Redis = custo extra** (cloud) ou complexidade (self-hosted)
+3. **Sistema já tem fallback automático** para in-memory
+4. **Plano FREE do Render** tem limite de recursos
+5. **Pode adicionar Redis depois** se precisar escalar
+
+Se precisar adicionar Redis depois:
+```env
+CACHE_BACKEND=redis
+REDIS_URL=redis://:password@host:port
+```
+
+Mas por agora: **CACHE_BACKEND=inmemory** é perfeito! ✅
 
 ---
 
 ## 🆘 Suporte Rápido
 
-| Problema | Comando |
+| Problema | Comando/Solução |
 |----------|---------|
 | Ver logs | `Render Dashboard → Logs` |
 | Forçar redeploy | `Render Dashboard → "Redeploy"` |
-| Reiniciar app | `Render Dashboard → "Restart"` |
-| Testar BD local | `poetry run python` → `from sqlalchemy import create_engine` |
-| Testar Redis local | `redis-cli ping` |
+| Testar BD local | `mysql -u user -p -h host` |
+| Gerar API Key | `openssl rand -hex 32` |
+| App suspenso (FREE) | Acesse URL para reativar |
 
 ---
 
-**Pronto! 🎉 API deve estar live em ~10 minutos.**
-
-Para troubleshooting avançado, veja: [`RENDER_DEPLOY_GUIDE.md`](RENDER_DEPLOY_GUIDE.md)
+**Pronto! 🎉 API deve estar live em ~10 minutos SEM Redis!**

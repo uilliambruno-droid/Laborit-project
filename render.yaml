@@ -44,12 +44,6 @@ services:
     autoDeploy: true
     branch: main
 
-    # Scaling
-    plan: standard
+    # Plan
+    plan: free
     numInstances: 1
-    autoscaling:
-      enabled: true
-      minInstances: 1
-      maxInstances: 3
-      targetCPUPercent: 70
-      targetMemoryPercent: 75
