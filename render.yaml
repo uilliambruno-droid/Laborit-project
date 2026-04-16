@@ -1,0 +1,55 @@
+services:
+  - type: web
+    name: laborit-copilot-api
+    runtime: python
+    pythonVersion: 3.11
+    
+    # Build command
+    buildCommand: |
+      pip install --upgrade pip setuptools wheel && \
+      pip install poetry && \
+      poetry install --no-root && \
+      poetry install
+
+    # Start command
+    startCommand: |
+      poetry run uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+    # Environment variables
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: PORT
+        value: "8000"
+
+    # Service environment variables (set via Render dashboard)
+    # These should be added as "Environment" section in Render dashboard:
+    # - DATABASE_URL (MySQL)
+    # - REDIS_URL (Redis cloud)
+    # - API_KEY (optional, for security)
+    # - CACHE_BACKEND (redis or inmemory)
+    # - LLM_TIMEOUT_MS
+    # - QUERY_TIMEOUT_MS
+    # - DATA_TIMEOUT_MS
+
+    # Health check
+    healthCheckPath: /api/health
+    healthCheckInterval: 30
+    healthCheckTimeout: 10
+    healthCheckUnhealthyThreshold: 3
+
+    # Auto-deploy on git push
+    autoDeploy: true
+    branch: main
+
+    # Scaling
+    plan: standard
+    numInstances: 1
+    autoscaling:
+      enabled: true
+      minInstances: 1
+      maxInstances: 3
+      targetCPUPercent: 70
+      targetMemoryPercent: 75
