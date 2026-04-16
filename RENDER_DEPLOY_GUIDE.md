@@ -52,7 +52,7 @@ cat render.yaml
    - **Region**: Mesma região da API (ex: São Paulo)
 4. Clique **"Create Database"**
 5. Aguarde 3-5 minutos
-6. **Copie a connection string** (formato: `mysql://user:pass@host:3306/db`)
+6. **Copie a connection string** (formato: `mysql+pymysql://user:pass@host:3306/db`)
 
 ### Opção B: PlanetScale (MySQL Cloud, melhor para produção)
 
@@ -122,7 +122,7 @@ Clique em **"Environment"** e adicione:
 
 ```env
 # Obrigatórias
-DATABASE_URL=mysql://user:password@host:3306/laborit_db
+DATABASE_URL=mysql+pymysql://user:password@host:3306/laborit_db
 REDIS_URL=redis://:password@host:port
 
 # Recomendadas

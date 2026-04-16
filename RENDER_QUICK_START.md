@@ -15,7 +15,7 @@
 1. https://planetscale.com → Sign up (grátis)
 2. Criar database: `laborit-db`
 3. Ir para **"Connections"** → Gerar **"Password"**
-4. Copiar connection string MySQL (formato: `mysql://user:pass@pscale_host:3306/laborit-db`)
+4. Copiar connection string MySQL (formato: `mysql+pymysql://user:pass@pscale_host:3306/laborit-db`)
 
 ### ✅ Alternativa: Render MySQL (Grátis também)
 
@@ -60,11 +60,17 @@ O sistema **já suporta cache em memória** (fallback automático). Redis era um
 Clique em **"Environment"** e adicione APENAS:
 
 ```env
-DATABASE_URL=mysql://user:pass@pscale_host:3306/laborit-db
+DATABASE_URL=mysql+pymysql://user:pass@pscale_host:3306/laborit-db
 ENVIRONMENT=production
 LOG_LEVEL=INFO
 CACHE_BACKEND=inmemory
 API_KEY=<gerar com: openssl rand -hex 32>
+```
+
+Se usar PlanetScale e der erro de conexão SSL, use:
+
+```env
+DATABASE_URL=mysql+pymysql://user:pass@pscale_host:3306/laborit-db?ssl_verify_cert=true&ssl_verify_identity=true
 ```
 
 **Pronto! Sem Redis!**
@@ -99,7 +105,7 @@ URL="https://seu-app.onrender.com"
 
 # Teste 1: Métricas
 curl -X GET "$URL/api/metrics" \
-  -H "X-API-Key: $API_KEY"
+  -H "e: $API_KEY"
 
 # Teste 2: Pergunta simples
 curl -X POST "$URL/api/copilot/question" \
@@ -123,7 +129,7 @@ curl -X POST "$URL/api/copilot/question" \
 Use a mesma **DATABASE_URL**:
 
 ```
-mysql://user:pass@pscale_host:3306/laborit-db
+mysql+pymysql://user:pass@pscale_host:3306/laborit-db
 ```
 
 ### Exemplo com MySQL CLI:

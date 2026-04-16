@@ -125,7 +125,7 @@ curl -X POST https://seu-app.onrender.com/api/copilot/question \
 
 | Variável | Valor | Exemplo |
 |----------|-------|---------|
-| `DATABASE_URL` | Obrigatório | `mysql://user:pass@host/db` |
+| `DATABASE_URL` | Obrigatório | `mysql+pymysql://user:pass@host/db` |
 | `REDIS_URL` | Obrigatório | `redis://:pass@host:port` |
 | `API_KEY` | Recomendado | `openssl rand -hex 32` |
 | `ENVIRONMENT` | Recomendado | `production` |
