@@ -30,6 +30,10 @@ def get_database_url() -> str:
     db_password = _require_env("DB_PASSWORD")
     db_host = _require_env("DB_HOST")
     db_port = os.getenv("DB_PORT", "3306")
+    if not db_port.isdigit():
+        raise RuntimeError(
+            "Invalid DB_PORT: expected a numeric value (for example, 3306)"
+        )
     db_name = _require_env("DB_NAME")
     return f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
 
@@ -71,6 +75,12 @@ def _classify_database_error(error: Exception) -> str:
             "Database SSL configuration failed: verify SSL parameters in DATABASE_URL"
         )
 
+    if "invalid literal for int()" in message and "port" in message:
+        return "Database configuration invalid: port must be numeric"
+
+    if "could not parse" in message or "malformed" in message:
+        return "Database URL is invalid: verify DATABASE_URL format"
+
     return "Database connection failed"
 
 
@@ -105,6 +115,16 @@ def check_database_connection() -> tuple[bool, str]:
             "Database is not configured: required environment variables are missing",
         )
     except SQLAlchemyError as error:
+        safe_detail = _classify_database_error(error)
+        logger.warning(
+            "database_health_check_failed",
+            extra={
+                "error_type": error.__class__.__name__,
+                "detail": safe_detail,
+            },
+        )
+        return False, safe_detail
+    except ValueError as error:
         safe_detail = _classify_database_error(error)
         logger.warning(
             "database_health_check_failed",
